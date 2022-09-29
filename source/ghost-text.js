@@ -1,13 +1,21 @@
-import GThumane from './humane-ghosttext.js';
-import unsafeMessenger from './unsafe-messenger.js';
+import GThumane from "./humane-ghosttext.js";
+import unsafeMessenger from "./unsafe-messenger.js";
 
 const knownElements = new Map();
 const activeFields = new Set();
-const eventOptions = {bubbles: true};
+const eventOptions = { bubbles: true };
 
 let isWaitingForActivation = false;
 const startTimeout = 15_000;
 let timeoutHandle;
+
+// Inject script to handle dc dispatches
+var s = document.createElement("script");
+s.src = chrome.runtime.getURL("myscript.js");
+s.onload = function () {
+	this.remove();
+};
+(document.head || document.documentElement).appendChild(s);
 
 class ContentEditableWrapper {
 	constructor(element) {
@@ -32,18 +40,18 @@ class AdvancedTextWrapper {
 	constructor(element, visualElement) {
 		this.el = element;
 		this.dataset = visualElement.dataset;
-		this.el.addEventListener('gt:input', event => {
+		this.el.addEventListener("gt:input", (event) => {
 			this._value = event.detail.value;
 		});
 		this.el.dispatchEvent(
-			new CustomEvent('gt:get', {
+			new CustomEvent("gt:get", {
 				bubbles: true,
-			}),
+			})
 		);
 	}
 
 	blur() {
-		this.el.dispatchEvent(new CustomEvent('gt:blur'));
+		this.el.dispatchEvent(new CustomEvent("gt:blur"));
 	}
 
 	addEventListener(type, callback) {
@@ -61,23 +69,23 @@ class AdvancedTextWrapper {
 	set value(value) {
 		if (this._value !== value) {
 			this._value = value;
-			this.el.setAttribute('gt-value', value);
-			this.el.dispatchEvent(new CustomEvent('gt:transfer'));
+			this.el.setAttribute("gt-value", value);
+			this.el.dispatchEvent(new CustomEvent("gt:transfer"));
 		}
 	}
 }
 
 function wrapField(field) {
-	if (field.classList.contains('ace_text-input')) {
+	if (field.classList.contains("ace_text-input")) {
 		const ace = field.parentNode;
-		const visualElement = ace.querySelector('.ace_scroller');
+		const visualElement = ace.querySelector(".ace_scroller");
 		return new AdvancedTextWrapper(ace, visualElement);
 	}
 
 	// If `field` is inside CodeMirror widget, it should be handled independently of it
-	const cm = field.closest('.CodeMirror, .CodeMirror-linewidget');
-	if (cm && cm.matches('.CodeMirror')) {
-		const visualElement = cm.querySelector('.CodeMirror-sizer');
+	const cm = field.closest(".CodeMirror, .CodeMirror-linewidget");
+	if (cm && cm.matches(".CodeMirror")) {
+		const visualElement = cm.querySelector(".CodeMirror-sizer");
 		return new AdvancedTextWrapper(cm, visualElement);
 	}
 
@@ -89,45 +97,48 @@ function wrapField(field) {
 }
 
 class GhostTextField {
-	constructor(field) {
+	constructor(field, dc) {
 		this.field = wrapField(field);
-		this.field.dataset.gtField = '';
+		this.field.dataset.gtField = "";
 		this.send = this.send.bind(this);
 		this.receive = this.receive.bind(this);
 		this.deactivate = this.deactivate.bind(this);
 		this.tryFocus = this.tryFocus.bind(this);
-		field.addEventListener('focus', this.tryFocus);
-		this.state = 'inactive';
+		field.addEventListener("focus", this.tryFocus);
+		this.state = "inactive";
+		this.dc = dc;
+		console.log("HI THERE");
+		console.log(dc);
 	}
 
 	async activate() {
-		if (this.state === 'active') {
+		if (this.state === "active") {
 			return;
 		}
 
-		this.state = 'active';
+		this.state = "active";
 		activeFields.add(this);
 
-		this.field.dataset.gtField = 'loading';
+		this.field.dataset.gtField = "loading";
 
-		this.port = chrome.runtime.connect({name: 'new-field'});
-		this.port.onMessage.addListener(message => {
+		this.port = chrome.runtime.connect({ name: "new-field" });
+		this.port.onMessage.addListener((message) => {
 			if (message.message) {
-				this.receive({data: message.message});
+				this.receive({ data: message.message });
 			} else if (message.close) {
 				this.deactivate(false);
 				updateCount();
 			} else if (message.ready) {
-				notify('log', 'Connected! You can switch to your editor');
+				notify("log", "Connected! You can switch to your editor");
 
-				this.field.addEventListener('input', this.send);
-				this.field.dataset.gtField = 'enabled';
+				this.field.addEventListener("input", this.send);
+				this.field.dataset.gtField = "enabled";
 
 				// Send first value to init tab
 				this.send();
 				updateCount();
 			} else if (message.error) {
-				notify('warn', message.error);
+				notify("warn", message.error);
 				this.deactivate(false);
 			}
 		});
@@ -138,12 +149,12 @@ class GhostTextField {
 			return;
 		}
 
-		console.info('sending', this.field.value.length, 'characters');
+		console.info("sending", this.field.value.length, "characters");
 		this.port.postMessage(
 			JSON.stringify({
 				title: document.title, // TODO: move to first fetch
 				url: location.host, // TODO: move to first fetch
-				syntax: '', // TODO: move to first fetch
+				syntax: "", // TODO: move to first fetch
 				text: this.field.value,
 				selections: [
 					{
@@ -151,53 +162,71 @@ class GhostTextField {
 						end: this.field.selectionEnd || 0,
 					},
 				],
-			}),
+			})
 		);
 	}
 
 	receive(event) {
-		const {text, selections} = JSON.parse(event.data);
+		const { text, selections } = JSON.parse(event.data);
+
+		console.log(this.dc);
+
+		var data = {
+			text: text,
+		};
+
+		document.dispatchEvent(
+			new CustomEvent("yourCustomEvent", { detail: data })
+		);
 
 		if (this.field.value !== text) {
 			this.field.value = text;
 
 			if (this.field.dispatchEvent) {
 				// These are in the right order
-				this.field.dispatchEvent(new KeyboardEvent('keydown'), eventOptions);
-				this.field.dispatchEvent(new KeyboardEvent('keypress'), eventOptions);
-				this.field.dispatchEvent(new CompositionEvent('textInput'), eventOptions);
-				this.field.dispatchEvent(new CustomEvent('input', { // InputEvent doesn't support custom data
-					...eventOptions,
-					detail: {
-						ghostTextSyntheticEvent: true,
-					},
-				}));
-				this.field.dispatchEvent(new KeyboardEvent('keyup'), eventOptions);
+				this.field.dispatchEvent(new KeyboardEvent("keydown"), eventOptions);
+				this.field.dispatchEvent(new KeyboardEvent("keypress"), eventOptions);
+				this.field.dispatchEvent(
+					new CompositionEvent("textInput"),
+					eventOptions
+				);
+				this.field.dispatchEvent(
+					new CustomEvent("input", {
+						// InputEvent doesn't support custom data
+						...eventOptions,
+						detail: {
+							ghostTextSyntheticEvent: true,
+						},
+					})
+				);
+				this.field.dispatchEvent(new KeyboardEvent("keyup"), eventOptions);
 			}
 		}
 
-		if (selections && typeof selections[0] === 'object') {
+		if (selections && typeof selections[0] === "object") {
 			this.field.selectionStart = selections[0].start;
 			this.field.selectionEnd = selections[0].end;
 		} else {
-			console.warn('GhostText for your editor is not sending the selections. Open an issue on its repository');
+			console.warn(
+				"GhostText for your editor is not sending the selections. Open an issue on its repository"
+			);
 		}
 	}
 
 	deactivate(wasSuccessful = true) {
-		if (this.state === 'inactive') {
+		if (this.state === "inactive") {
 			return;
 		}
 
-		this.state = 'inactive';
-		console.log('Disabling field');
+		this.state = "inactive";
+		console.log("Disabling field");
 		activeFields.delete(this);
 		this.port.disconnect();
-		this.field.removeEventListener('input', this.send);
-		this.field.dataset.gtField = '';
+		this.field.removeEventListener("input", this.send);
+		this.field.dataset.gtField = "";
 
 		chrome.runtime.sendMessage({
-			code: 'focus-tab',
+			code: "focus-tab",
 		});
 
 		if (wasSuccessful) {
@@ -206,11 +235,11 @@ class GhostTextField {
 	}
 
 	tryFocus() {
-		if (isWaitingForActivation && this.state === 'inactive') {
+		if (isWaitingForActivation && this.state === "inactive") {
 			clearTimeout(timeoutHandle);
 			this.activate();
 			isWaitingForActivation = false;
-			document.body.classList.remove('GT--waiting');
+			document.body.classList.remove("GT--waiting");
 		}
 	}
 
@@ -223,12 +252,15 @@ class GhostTextField {
 
 function updateCount() {
 	chrome.runtime.sendMessage({
-		code: 'connection-count',
+		code: "connection-count",
 		count: activeFields.size,
 	});
 
 	if (activeFields.size === 0) {
-		notify('log', 'Disconnected! \n <a href="https://github.com/fregante/GhostText/issues" target="_blank">Report issues</a>');
+		notify(
+			"log",
+			'Disconnected! \n <a href="https://github.com/fregante/GhostText/issues" target="_blank">Report issues</a>'
+		);
 	}
 }
 
@@ -242,39 +274,50 @@ function registerElements() {
 		// TODO: Only handle areas that are visible
 		//  && element.getBoundingClientRect().width > 20
 		if (!knownElements.has(element)) {
-			knownElements.set(element, new GhostTextField(element));
+			knownElements.set(
+				element,
+				new GhostTextField(element, window.__dc_resources)
+			);
 		}
 	}
 }
 
 function getMessageDisplayTime(message) {
 	const wpm = 100; // 180 is the average words read per minute, make it slower
-	return message.split(' ').length / wpm * 60_000;
+	return (message.split(" ").length / wpm) * 60_000;
 }
 
 function notify(type, message, timeout = getMessageDisplayTime(message)) {
-	console[type]('GhostText:', message);
+	console[type]("GhostText:", message);
 	GThumane.remove();
-	message = message.replace(/\n/g, '<br>');
+	message = message.replace(/\n/g, "<br>");
 	const notification = GThumane.log(message, {
 		timeout,
-		addnCls: type === 'log' ? '' : 'ghost-text-message-error',
+		addnCls: type === "log" ? "" : "ghost-text-message-error",
 	});
-	document.addEventListener('click', () => notification.remove(), {once: true});
+	document.addEventListener("click", () => notification.remove(), {
+		once: true,
+	});
 }
 
 function startGT() {
 	clearTimeout(timeoutHandle);
 
 	registerElements();
-	console.info(knownElements.size + ' fields on the page');
+	console.info(knownElements.size + " fields on the page");
 	if (knownElements.size === 0) {
-		notify('warn', 'No supported fields found. <a href="https://ghosttext.fregante.com/troubleshooting/#no-supported-fields">Need help?</a>');
+		notify(
+			"warn",
+			'No supported fields found. <a href="https://ghosttext.fregante.com/troubleshooting/#no-supported-fields">Need help?</a>'
+		);
 		return;
 	}
 
 	if (knownElements.size === activeFields.size) {
-		notify('log', 'All the fields on the page are active. Right-click the GhostText icon if you want to stop the connection');
+		notify(
+			"log",
+			"All the fields on the page are active. Right-click the GhostText icon if you want to stop the connection"
+		);
 		return;
 	}
 
@@ -286,19 +329,25 @@ function startGT() {
 	}
 
 	// Automatically activate the only inactive field on the page
-	const inactiveFields = [...knownElements.values()].filter(field => !activeFields.has(field));
-	if (inactiveFields.length === 1 && !document.querySelector('iframe')) {
+	const inactiveFields = [...knownElements.values()].filter(
+		(field) => !activeFields.has(field)
+	);
+	if (inactiveFields.length === 1 && !document.querySelector("iframe")) {
 		inactiveFields[0].activate();
 		return;
 	}
 
 	isWaitingForActivation = true;
-	document.body.classList.add('GT--waiting');
+	document.body.classList.add("GT--waiting");
 
 	if (activeFields.size === 0) {
-		notify('log', 'Click on the desired element to activate it.', startTimeout);
+		notify("log", "Click on the desired element to activate it.", startTimeout);
 	} else {
-		notify('log', 'Click on the desired element to activate it or right-click the GhostText icon to stop the connection.', startTimeout);
+		notify(
+			"log",
+			"Click on the desired element to activate it or right-click the GhostText icon to stop the connection.",
+			startTimeout
+		);
 	}
 
 	clearTimeout(timeoutHandle);
@@ -308,12 +357,12 @@ function startGT() {
 function stopGT() {
 	GhostTextField.deactivateAll();
 	isWaitingForActivation = false;
-	document.body.classList.remove('GT--waiting');
+	document.body.classList.remove("GT--waiting");
 }
 
 function init() {
-	const script = document.createElement('script');
-	script.textContent = '(' + unsafeMessenger.toString() + ')()';
+	const script = document.createElement("script");
+	script.textContent = "(" + unsafeMessenger.toString() + ")()";
 	document.head.append(script);
 }
 

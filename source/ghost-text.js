@@ -17,6 +17,17 @@ s.onload = function () {
 };
 (document.head || document.documentElement).appendChild(s);
 
+// This will be handling the selection of components to activate and such.
+window.addEventListener("message", function (event) {
+	// We only accept messages from ourselves
+	//if (event.source != window) return;
+
+	// if (event.data.type && event.data.type == "FROM_PAGE") {
+	console.log(event.data);
+	new GhostTextField(null, data.id).activate();
+	// }
+});
+
 class ContentEditableWrapper {
 	constructor(element) {
 		this.el = element;
@@ -97,7 +108,7 @@ function wrapField(field) {
 }
 
 class GhostTextField {
-	constructor(field, dc) {
+	constructor(field, id) {
 		this.field = wrapField(field);
 		this.field.dataset.gtField = "";
 		this.send = this.send.bind(this);
@@ -106,9 +117,7 @@ class GhostTextField {
 		this.tryFocus = this.tryFocus.bind(this);
 		field.addEventListener("focus", this.tryFocus);
 		this.state = "inactive";
-		this.dc = dc;
-		console.log("HI THERE");
-		console.log(dc);
+		this.id = id;
 	}
 
 	async activate() {
@@ -169,48 +178,47 @@ class GhostTextField {
 	receive(event) {
 		const { text, selections } = JSON.parse(event.data);
 
-		console.log(this.dc);
-
 		var data = {
 			text: text,
+			id: this.id,
 		};
 
 		document.dispatchEvent(
 			new CustomEvent("yourCustomEvent", { detail: data })
 		);
 
-		if (this.field.value !== text) {
-			this.field.value = text;
+		// if (this.field.value !== text) {
+		// 	this.field.value = text;
+		//
+		// 	if (this.field.dispatchEvent) {
+		// 		// These are in the right order
+		// 		this.field.dispatchEvent(new KeyboardEvent("keydown"), eventOptions);
+		// 		this.field.dispatchEvent(new KeyboardEvent("keypress"), eventOptions);
+		// 		this.field.dispatchEvent(
+		// 			new CompositionEvent("textInput"),
+		// 			eventOptions
+		// 		);
+		// 		this.field.dispatchEvent(
+		// 			new CustomEvent("input", {
+		// 				// InputEvent doesn't support custom data
+		// 				...eventOptions,
+		// 				detail: {
+		// 					ghostTextSyntheticEvent: true,
+		// 				},
+		// 			})
+		// 		);
+		// 		this.field.dispatchEvent(new KeyboardEvent("keyup"), eventOptions);
+		// 	}
+		// }
 
-			if (this.field.dispatchEvent) {
-				// These are in the right order
-				this.field.dispatchEvent(new KeyboardEvent("keydown"), eventOptions);
-				this.field.dispatchEvent(new KeyboardEvent("keypress"), eventOptions);
-				this.field.dispatchEvent(
-					new CompositionEvent("textInput"),
-					eventOptions
-				);
-				this.field.dispatchEvent(
-					new CustomEvent("input", {
-						// InputEvent doesn't support custom data
-						...eventOptions,
-						detail: {
-							ghostTextSyntheticEvent: true,
-						},
-					})
-				);
-				this.field.dispatchEvent(new KeyboardEvent("keyup"), eventOptions);
-			}
-		}
-
-		if (selections && typeof selections[0] === "object") {
-			this.field.selectionStart = selections[0].start;
-			this.field.selectionEnd = selections[0].end;
-		} else {
-			console.warn(
-				"GhostText for your editor is not sending the selections. Open an issue on its repository"
-			);
-		}
+		// if (selections && typeof selections[0] === "object") {
+		// 	this.field.selectionStart = selections[0].start;
+		// 	this.field.selectionEnd = selections[0].end;
+		// } else {
+		// 	console.warn(
+		// 		"GhostText for your editor is not sending the selections. Open an issue on its repository"
+		// 	);
+		// }
 	}
 
 	deactivate(wasSuccessful = true) {
